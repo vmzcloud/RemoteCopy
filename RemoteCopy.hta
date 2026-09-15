@@ -1,0 +1,765 @@
+<html>
+<head>
+<title>Remote File Copy - Admin Share</title>
+<HTA:APPLICATION
+    ID="RemoteCopy"
+    APPLICATIONNAME="Remote File Copy"
+    BORDER="dialog"
+    BORDERSTYLE="normal"
+    CAPTION="yes"
+    ICON="shell32.dll,4"
+    MAXIMIZEBUTTON="no"
+    MINIMIZEBUTTON="yes"
+    SHOWINTASKBAR="yes"
+    SINGLEINSTANCE="yes"
+    SYSMENU="yes"
+    VERSION="2.5"
+    WINDOWSTATE="normal"
+/>
+
+<style>
+    body {
+        font-family: "Segoe UI", Tahoma, sans-serif;
+        font-size: 13px;
+        margin: 12px;
+        background: #f0f2f5;
+        color: #222;
+    }
+    .container {
+        background: white;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+        padding: 16px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    }
+    h2 {
+        margin: 0 0 12px 0;
+        color: #1a73e8;
+        font-size: 18px;
+    }
+    label {
+        display: block;
+        margin-top: 10px;
+        font-weight: 600;
+        color: #444;
+    }
+    input[type="text"], input[type="password"] {
+        width: 100%;
+        padding: 6px 9px;
+        margin-top: 3px;
+        border: 1px solid #bbb;
+        border-radius: 4px;
+        box-sizing: border-box;
+        font-size: 13px;
+    }
+    .row {
+        display: flex;
+        gap: 8px;
+        align-items: flex-end;
+        flex-wrap: wrap;
+    }
+    .row > div { flex: 1; }
+    button {
+        padding: 7px 14px;
+        margin-top: 10px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 600;
+    }
+    .btn-primary {
+        background: #1a73e8;
+        color: white;
+    }
+    .btn-primary:hover { background: #1557b0; }
+    .btn-secondary {
+        background: #e8eaed;
+        color: #333;
+    }
+    .btn-secondary:hover { background: #d2d5d9; }
+    .btn-ping {
+        background: #34a853;
+        color: white;
+    }
+    .btn-ping:hover { background: #2d8e47; }
+    .btn-open {
+        padding: 2px 8px;
+        font-size: 11px;
+        background: #e8eaed;
+        color: #333;
+        margin: 0;
+        margin-left: 6px;
+    }
+    .btn-open:hover {
+        background: #d2d5d9;
+    }
+    #log {
+        width: 100%;
+        height: 150px;
+        margin-top: 10px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        padding: 8px;
+        font-family: Consolas, monospace;
+        font-size: 12px;
+        background: #1e1e1e;
+        color: #d4d4d4;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        box-sizing: border-box;
+    }
+    .status {
+        margin-top: 6px;
+        font-size: 12px;
+        color: #666;
+    }
+    .checkbox-row {
+        margin-top: 10px;
+    }
+    #pcListContainer {
+        border: 1px solid #bbb;
+        border-radius: 4px;
+        height: 150px;
+        overflow-y: auto;
+        padding: 4px 6px;
+        background: #fafafa;
+        margin-top: 4px;
+    }
+    .pc-row {
+        display: flex;
+        align-items: center;
+        padding: 3px 4px;
+        border-bottom: 1px solid #eee;
+    }
+    .pc-row:last-child {
+        border-bottom: none;
+    }
+    .pc-row input[type="checkbox"] {
+        margin-right: 8px;
+    }
+    .pc-name {
+        flex: 1;
+        font-weight: normal;
+    }
+    .pc-status {
+        width: 65px;
+        text-align: right;
+        font-size: 12px;
+        font-weight: 600;
+    }
+    .status-online {
+        color: #34a853;
+    }
+    .status-offline {
+        color: #ea4335;
+    }
+    .status-unknown {
+        color: #999;
+    }
+</style>
+
+<script language="VBScript">
+Option Explicit
+
+Dim oShell, oFSO, logArea
+Dim onlinePCs
+
+Sub Window_OnLoad
+    Set oShell = CreateObject("WScript.Shell")
+    Set oFSO   = CreateObject("Scripting.FileSystemObject")
+    Set logArea = document.getElementById("log")
+    onlinePCs = ""
+
+    self.ResizeTo 760, 880
+    self.MoveTo (screen.availWidth - 760) / 2, (screen.availHeight - 880) / 2
+
+    document.getElementById("txtDest").Value = "C:\Temp"
+    Log "Ready. Load a PC list or type computer names."
+End Sub
+
+Sub BrowseSource
+    Dim result, cmd, tempFile, f
+    tempFile = oShell.ExpandEnvironmentStrings("%TEMP%") & "\hta_browse_result.txt"
+
+    cmd = "powershell -NoProfile -WindowStyle Hidden -Command " & _
+          """Add-Type -AssemblyName System.Windows.Forms; " & _
+          "$f = New-Object System.Windows.Forms.OpenFileDialog; " & _
+          "$f.Filter = 'All files (*.*)|*.*'; " & _
+          "$f.Title = 'Select file to copy'; " & _
+          "if ($f.ShowDialog() -eq 'OK') { $f.FileName | Out-File -FilePath '" & tempFile & "' -Encoding ascii }"""
+
+    oShell.Run cmd, 0, True
+
+    If oFSO.FileExists(tempFile) Then
+        Set f = oFSO.OpenTextFile(tempFile, 1)
+        result = Trim(f.ReadAll)
+        f.Close
+        oFSO.DeleteFile tempFile, True
+        If result <> "" Then
+            document.getElementById("txtSource").Value = result
+            Log "Source selected: " & result
+        End If
+    End If
+End Sub
+
+Sub BrowseFolder
+    Dim objDialog, selected
+    On Error Resume Next
+    Set objDialog = CreateObject("Shell.Application")
+    Set selected = objDialog.BrowseForFolder(0, "Select folder to copy", 0)
+    If Not selected Is Nothing Then
+        document.getElementById("txtSource").Value = selected.Self.Path
+        Log "Folder selected: " & selected.Self.Path
+    End If
+    On Error GoTo 0
+End Sub
+
+Sub LoadPCList
+    Dim cmd, tempFile, f, lines, i, html, pcName
+    tempFile = oShell.ExpandEnvironmentStrings("%TEMP%") & "\hta_pclist.txt"
+
+    cmd = "powershell -NoProfile -WindowStyle Hidden -Command " & _
+          """Add-Type -AssemblyName System.Windows.Forms; " & _
+          "$f = New-Object System.Windows.Forms.OpenFileDialog; " & _
+          "$f.Filter = 'Text files (*.txt)|*.txt|All files (*.*)|*.*'; " & _
+          "$f.Title = 'Select PC list file'; " & _
+          "if ($f.ShowDialog() -eq 'OK') { Get-Content $f.FileName | Out-File -FilePath '" & tempFile & "' -Encoding ascii }"""
+
+    oShell.Run cmd, 0, True
+    If Not oFSO.FileExists(tempFile) Then Exit Sub
+
+    Set f = oFSO.OpenTextFile(tempFile, 1)
+    lines = Split(f.ReadAll, vbCrLf)
+    f.Close
+    oFSO.DeleteFile tempFile, True
+
+    html = ""
+    For i = 0 To UBound(lines)
+        pcName = Trim(lines(i))
+        If pcName <> "" Then
+            html = html & "<div class='pc-row'>" & _
+                   "<input type='checkbox' name='pcCheck' value='" & pcName & "' checked>" & _
+                   "<span class='pc-name'>" & pcName & "</span>" & _
+                   "<span class='pc-status status-unknown' id='status_" & pcName & "'>-</span>" & _
+                   "<button class='btn-open' onclick='OpenExplorer(""" & pcName & """)'>Open</button>" & _
+                   "</div>"
+        End If
+    Next
+    document.getElementById("pcListContainer").innerHTML = html
+    onlinePCs = ""
+    Log "Loaded PC list successfully."
+End Sub
+
+Sub SelectAllPCs
+    Dim checks, i
+    Set checks = document.getElementsByName("pcCheck")
+    For i = 0 To checks.length - 1
+        checks(i).checked = True
+    Next
+End Sub
+
+Sub ClearAllPCs
+    Dim checks, i
+    Set checks = document.getElementsByName("pcCheck")
+    For i = 0 To checks.length - 1
+        checks(i).checked = False
+    Next
+End Sub
+
+Sub ClearLog
+    logArea.innerText = ""
+End Sub
+
+Sub Log(msg)
+    On Error Resume Next
+    Dim timestamp
+    timestamp = Year(Now) & "-" & _
+                Right("0" & Month(Now), 2) & "-" & _
+                Right("0" & Day(Now), 2) & " " & _
+                Right("0" & Hour(Now), 2) & ":" & _
+                Right("0" & Minute(Now), 2) & ":" & _
+                Right("0" & Second(Now), 2)
+
+    logArea.innerText = logArea.innerText & timestamp & "  " & msg & vbCrLf
+    logArea.scrollTop = logArea.scrollHeight
+    On Error GoTo 0
+End Sub
+
+Function GetSelectedPCs()
+    Dim checks, i, result
+    result = ""
+    Set checks = document.getElementsByName("pcCheck")
+    For i = 0 To checks.length - 1
+        If checks(i).checked Then
+            If result <> "" Then result = result & ","
+            result = result & checks(i).value
+        End If
+    Next
+    GetSelectedPCs = result
+End Function
+
+Sub UpdatePCStatus(pcName, isOnline)
+    Dim el
+    On Error Resume Next
+    Set el = document.getElementById("status_" & pcName)
+    If Not el Is Nothing Then
+        If isOnline Then
+            el.innerText = "Online"
+            el.className = "pc-status status-online"
+        Else
+            el.innerText = "Offline"
+            el.className = "pc-status status-offline"
+        End If
+    End If
+    On Error GoTo 0
+End Sub
+
+Sub SetDestCustom()
+End Sub
+
+Sub SetDestStartup()
+    document.getElementById("txtDest").Value = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
+    Log "Destination set to Computer Startup folder"
+End Sub
+
+Sub OpenExplorer(pcName)
+    Dim dest, driveLetter, restPath, adminPath, user, pass
+    Dim objShellApp, connectCmd
+
+    dest = Trim(document.getElementById("txtDest").Value)
+    user = Trim(document.getElementById("txtUser").Value)
+    pass = Trim(document.getElementById("txtPass").Value)
+
+    If dest = "" Then
+        MsgBox "Please enter Destination Path first.", vbExclamation, "Missing Destination"
+        Exit Sub
+    End If
+    If user = "" Then
+        MsgBox "Please enter Username.", vbExclamation, "Missing Information"
+        Exit Sub
+    End If
+    If pass = "" Then
+        MsgBox "Please enter Password.", vbExclamation, "Missing Information"
+        Exit Sub
+    End If
+
+    If Left(dest, 1) = "\" Then dest = Mid(dest, 2)
+    If Mid(dest, 2, 1) <> ":" Then
+        MsgBox "Destination must be a local path, e.g. C:\Temp", vbExclamation, "Invalid Format"
+        Exit Sub
+    End If
+
+    driveLetter = UCase(Left(dest, 1))
+    restPath = Mid(dest, 3)
+    If Left(restPath, 1) = "\" Then restPath = Mid(restPath, 2)
+
+    If restPath = "" Then
+        adminPath = "\\" & pcName & "\" & driveLetter & "$"
+    Else
+        adminPath = "\\" & pcName & "\" & driveLetter & "$\" & restPath
+    End If
+
+    Log "Opening: " & adminPath
+
+    oShell.Run "cmd /c net use \\" & pcName & "\ipc$ /delete /y >nul 2>&1", 0, True
+    oShell.Run "cmd /c net use \\" & pcName & "\" & driveLetter & "$ /delete /y >nul 2>&1", 0, True
+    connectCmd = "cmd /c net use \\" & pcName & "\" & driveLetter & "$ /user:" & user & " " & pass & " /persistent:no"
+    oShell.Run connectCmd, 0, True
+
+    On Error Resume Next
+    Set objShellApp = CreateObject("Shell.Application")
+    objShellApp.Explore adminPath
+    If Err.Number <> 0 Then
+        oShell.Run "explorer.exe """ & adminPath & """", 1, False
+    End If
+    On Error GoTo 0
+End Sub
+
+Function GetCurrentTargets()
+    GetCurrentTargets = GetSelectedPCs()
+End Function
+
+Function IsPcInList(pcName, csvList)
+    Dim arr, i
+    IsPcInList = False
+    If csvList = "" Then Exit Function
+    arr = Split(csvList, ",")
+    For i = 0 To UBound(arr)
+        If LCase(Trim(arr(i))) = LCase(Trim(pcName)) Then
+            IsPcInList = True
+            Exit Function
+        End If
+    Next
+End Function
+
+Function FilterOnlineOnly(selectedCsv, onlineCsv)
+    Dim selArr, i, pcName, result
+    result = ""
+    selArr = Split(selectedCsv, ",")
+    For i = 0 To UBound(selArr)
+        pcName = Trim(selArr(i))
+        If pcName <> "" Then
+            If IsPcInList(pcName, onlineCsv) Then
+                If result <> "" Then result = result & ","
+                result = result & pcName
+            End If
+        End If
+    Next
+    FilterOnlineOnly = result
+End Function
+
+Function GetOfflineSkipped(selectedCsv, onlineCsv)
+    Dim selArr, i, pcName, result
+    result = ""
+    selArr = Split(selectedCsv, ",")
+    For i = 0 To UBound(selArr)
+        pcName = Trim(selArr(i))
+        If pcName <> "" Then
+            If Not IsPcInList(pcName, onlineCsv) Then
+                If result <> "" Then result = result & ","
+                result = result & pcName
+            End If
+        End If
+    Next
+    GetOfflineSkipped = result
+End Function
+
+Sub ApplyOnlineStatuses(targetsCsv, onlineCsv)
+    Dim checks, i, pcName, targetArr, j
+    Set checks = document.getElementsByName("pcCheck")
+    For i = 0 To checks.length - 1
+        pcName = Trim(checks(i).value)
+        If IsPcInList(pcName, targetsCsv) Then
+            UpdatePCStatus pcName, IsPcInList(pcName, onlineCsv)
+        End If
+    Next
+
+    targetArr = Split(targetsCsv, ",")
+    For j = 0 To UBound(targetArr)
+        pcName = Trim(targetArr(j))
+        If pcName <> "" Then
+            On Error Resume Next
+            UpdatePCStatus pcName, IsPcInList(pcName, onlineCsv)
+            On Error GoTo 0
+        End If
+    Next
+End Sub
+
+' Pings targets. showConsole=True shows PowerShell window.
+' Returns comma-separated online PCs and sets global onlinePCs.
+Function RunPing(targets, showConsole)
+    Dim tempPs1, resultFile, ret, f, psContent, winStyle, checks, i
+
+    onlinePCs = ""
+    RunPing = ""
+
+    If targets = "" Then Exit Function
+
+    Set checks = document.getElementsByName("pcCheck")
+    For i = 0 To checks.length - 1
+        On Error Resume Next
+        If IsPcInList(checks(i).value, targets) Then
+            document.getElementById("status_" & checks(i).value).innerText = "..."
+            document.getElementById("status_" & checks(i).value).className = "pc-status status-unknown"
+        End If
+        On Error GoTo 0
+    Next
+
+    tempPs1 = oShell.ExpandEnvironmentStrings("%TEMP%") & "\PingCheck.ps1"
+    resultFile = oShell.ExpandEnvironmentStrings("%TEMP%") & "\PingResult.txt"
+
+    psContent = "$computers = @(" & BuildComputerArray(targets) & ")" & vbCrLf & _
+                "$results = @()" & vbCrLf & _
+                "foreach ($pc in $computers) {" & vbCrLf & _
+                "    $pc = $pc.Trim()" & vbCrLf & _
+                "    if ([string]::IsNullOrWhiteSpace($pc)) { continue }" & vbCrLf & _
+                "    $online = Test-Connection -ComputerName $pc -Count 1 -Quiet -ErrorAction SilentlyContinue" & vbCrLf & _
+                "    if ($online) {" & vbCrLf & _
+                "        Write-Host ('[ONLINE ] ' + $pc) -ForegroundColor Green" & vbCrLf & _
+                "        $results += $pc" & vbCrLf & _
+                "    } else {" & vbCrLf & _
+                "        Write-Host ('[OFFLINE] ' + $pc) -ForegroundColor Red" & vbCrLf & _
+                "    }" & vbCrLf & _
+                "}" & vbCrLf & _
+                "$results -join ',' | Out-File -FilePath '" & resultFile & "' -Encoding ascii -NoNewline"
+
+    Set f = oFSO.CreateTextFile(tempPs1, True)
+    f.Write psContent
+    f.Close
+
+    If showConsole Then
+        winStyle = 1
+    Else
+        winStyle = 0
+    End If
+
+    ret = oShell.Run("powershell.exe -NoProfile -ExecutionPolicy Bypass -File """ & tempPs1 & """", winStyle, True)
+
+    If oFSO.FileExists(resultFile) Then
+        Set f = oFSO.OpenTextFile(resultFile, 1)
+        If Not f.AtEndOfStream Then
+            onlinePCs = Trim(f.ReadAll)
+        End If
+        f.Close
+        oFSO.DeleteFile resultFile, True
+    End If
+
+    ApplyOnlineStatuses targets, onlinePCs
+
+    On Error Resume Next
+    oFSO.DeleteFile tempPs1, True
+    On Error GoTo 0
+
+    RunPing = onlinePCs
+End Function
+
+Sub PingCheck
+    Dim targets
+
+    targets = GetCurrentTargets()
+    If targets = "" Then
+        MsgBox "Please load a PC list and select at least one computer.", vbExclamation, "No PCs"
+        Exit Sub
+    End If
+
+    Log "===== Starting Ping Check ====="
+    Log "Testing: " & targets
+
+    RunPing targets, True
+
+    If onlinePCs = "" Then
+        Log "Result: No computers are online."
+    Else
+        Log "Online PCs: " & onlinePCs
+    End If
+    Log "===== Ping Check Finished ====="
+End Sub
+
+Sub StartCopy
+    Dim source, targets, dest, user, pass, recurse, onlyOnline
+    Dim tempPs1, ret, psContent, f
+    Dim driveLetter, restPath
+    Dim selectedTargets, onlineList, skipped
+
+    source     = Trim(document.getElementById("txtSource").Value)
+    dest       = Trim(document.getElementById("txtDest").Value)
+    user       = Trim(document.getElementById("txtUser").Value)
+    pass       = Trim(document.getElementById("txtPass").Value)
+    recurse    = document.getElementById("chkRecurse").Checked
+    onlyOnline = document.getElementById("chkOnlyOnline").Checked
+
+    selectedTargets = GetCurrentTargets()
+
+    If source = "" Then
+        MsgBox "Please select a source file or folder.", vbExclamation, "Missing Information"
+        Exit Sub
+    End If
+    If selectedTargets = "" Then
+        MsgBox "Please load a PC list and select at least one computer.", vbExclamation, "Missing Information"
+        Exit Sub
+    End If
+    If dest = "" Then
+        MsgBox "Please enter a destination path.", vbExclamation, "Missing Information"
+        Exit Sub
+    End If
+    If user = "" Then
+        MsgBox "Please enter Username.", vbExclamation, "Missing Information"
+        Exit Sub
+    End If
+    If pass = "" Then
+        MsgBox "Please enter Password.", vbExclamation, "Missing Information"
+        Exit Sub
+    End If
+
+    If onlyOnline Then
+        Log "===== Only Online: pinging selected targets ====="
+        Log "Testing: " & selectedTargets
+        onlineList = RunPing(selectedTargets, True)
+        targets = FilterOnlineOnly(selectedTargets, onlineList)
+        skipped = GetOfflineSkipped(selectedTargets, onlineList)
+
+        If skipped <> "" Then
+            Log "Skipped offline: " & skipped
+        End If
+
+        If targets = "" Then
+            Log "No online computers to copy to. Copy cancelled."
+            Log "===== Only Online: aborted ====="
+            MsgBox "No online computers found among the selected targets." & vbCrLf & _
+                   "Copy cancelled.", vbExclamation, "Only Online PCs"
+            Exit Sub
+        End If
+
+        Log "Will copy to online only: " & targets
+    Else
+        targets = selectedTargets
+    End If
+
+    If Left(dest, 1) = "\" Then dest = Mid(dest, 2)
+    If Mid(dest, 2, 1) <> ":" Then
+        MsgBox "Destination must be a local path, e.g. C:\Temp", vbExclamation, "Invalid Format"
+        Exit Sub
+    End If
+
+    driveLetter = UCase(Left(dest, 1))
+    restPath = Mid(dest, 3)
+    If Left(restPath, 1) = "\" Then restPath = Mid(restPath, 2)
+
+    Log "===== Starting Copy ====="
+    Log "Source  : " & source
+    Log "Targets : " & targets
+    Log "Dest    : " & dest
+    Log "User    : " & user
+    If recurse Then Log "Mode    : Recurse"
+
+    tempPs1 = oShell.ExpandEnvironmentStrings("%TEMP%") & "\RemoteCopy_" & _
+              Replace(Replace(Replace(CStr(Now), ":", ""), " ", "_"), "/", "") & ".ps1"
+
+    psContent = ""
+    psContent = psContent & "$ErrorActionPreference = 'Continue'" & vbCrLf
+    psContent = psContent & "$source = '" & EscapePS(source) & "'" & vbCrLf
+    psContent = psContent & "$driveLetter = '" & driveLetter & "'" & vbCrLf
+    psContent = psContent & "$restPath = '" & EscapePS(restPath) & "'" & vbCrLf
+    psContent = psContent & "$computers = @(" & BuildComputerArray(targets) & ")" & vbCrLf
+    psContent = psContent & "$recurse = $" & LCase(CStr(recurse)) & vbCrLf
+    psContent = psContent & "$user = '" & EscapePS(user) & "'" & vbCrLf
+    psContent = psContent & "$pass = '" & EscapePS(pass) & "'" & vbCrLf
+    psContent = psContent & vbCrLf
+
+    psContent = psContent & "foreach ($pc in $computers) {" & vbCrLf
+    psContent = psContent & "    $pc = $pc.Trim()" & vbCrLf
+    psContent = psContent & "    if ([string]::IsNullOrWhiteSpace($pc)) { continue }" & vbCrLf
+    psContent = psContent & "    Write-Host ''" & vbCrLf
+    psContent = psContent & "    Write-Host ('>>> Processing ' + $pc + ' ...') -ForegroundColor Cyan" & vbCrLf
+    psContent = psContent & vbCrLf
+    psContent = psContent & "    cmd /c net use \\$pc\ipc$ /delete /y >nul 2>&1" & vbCrLf
+    psContent = psContent & "    cmd /c net use \\$pc\$driveLetter`$ /delete /y >nul 2>&1" & vbCrLf
+    psContent = psContent & vbCrLf
+    psContent = psContent & "    $adminShare = '\\' + $pc + '\' + $driveLetter + '$\' + $restPath" & vbCrLf
+    psContent = psContent & "    Write-Host ('Target folder: ' + $adminShare)" & vbCrLf
+    psContent = psContent & "    try {" & vbCrLf
+    psContent = psContent & "        Write-Host 'Connecting with credentials...'" & vbCrLf
+    psContent = psContent & "        $connectResult = cmd /c net use \\$pc\$driveLetter`$ /user:$user $pass /persistent:no 2>&1" & vbCrLf
+    psContent = psContent & "        if ($LASTEXITCODE -ne 0) {" & vbCrLf
+    psContent = psContent & "            throw ('Failed to connect: ' + ($connectResult -join ' '))" & vbCrLf
+    psContent = psContent & "        }" & vbCrLf
+    psContent = psContent & "        Write-Host 'Connected.' -ForegroundColor Green" & vbCrLf
+    psContent = psContent & vbCrLf
+    psContent = psContent & "        if (-not (Test-Path -LiteralPath $adminShare -ErrorAction SilentlyContinue)) {" & vbCrLf
+    psContent = psContent & "            New-Item -ItemType Directory -Path $adminShare -Force -ErrorAction Stop | Out-Null" & vbCrLf
+    psContent = psContent & "            Write-Host ('Created folder: ' + $adminShare) -ForegroundColor Yellow" & vbCrLf
+    psContent = psContent & "        }" & vbCrLf
+    psContent = psContent & vbCrLf
+    psContent = psContent & "        Write-Host 'Copying...'" & vbCrLf
+    psContent = psContent & "        Copy-Item -Path $source -Destination $adminShare -Recurse -Force -ErrorAction Stop" & vbCrLf
+    psContent = psContent & "        Write-Host ('[SUCCESS] ' + $pc) -ForegroundColor Green" & vbCrLf
+    psContent = psContent & "        cmd /c net use \\$pc\$driveLetter`$ /delete /y >nul 2>&1" & vbCrLf
+    psContent = psContent & "    } catch {" & vbCrLf
+    psContent = psContent & "        Write-Host ('[FAILED] ' + $pc + ' : ' + $_.Exception.Message) -ForegroundColor Red" & vbCrLf
+    psContent = psContent & "        cmd /c net use \\$pc\$driveLetter`$ /delete /y >nul 2>&1" & vbCrLf
+    psContent = psContent & "    }" & vbCrLf
+    psContent = psContent & "}" & vbCrLf
+    psContent = psContent & "Write-Host ''" & vbCrLf
+    psContent = psContent & "Write-Host '===== Completed =====' -ForegroundColor Yellow" & vbCrLf
+
+    Set f = oFSO.CreateTextFile(tempPs1, True)
+    f.Write psContent
+    f.Close
+
+    Log "Running PowerShell..."
+    Log "Script: " & tempPs1
+
+    ret = oShell.Run("powershell.exe -NoProfile -ExecutionPolicy Bypass -File """ & tempPs1 & """", 1, True)
+
+    Log "PowerShell finished (ExitCode: " & ret & ")"
+    Log "===== All Done ====="
+
+    On Error Resume Next
+    oFSO.DeleteFile tempPs1, True
+    On Error GoTo 0
+End Sub
+
+Function EscapePS(str)
+    EscapePS = Replace(str, "'", "''")
+End Function
+
+Function BuildComputerArray(list)
+    Dim arr, i, result
+    arr = Split(list, ",")
+    result = ""
+    For i = 0 To UBound(arr)
+        If Trim(arr(i)) <> "" Then
+            If result <> "" Then result = result & ", "
+            result = result & "'" & EscapePS(Trim(arr(i))) & "'"
+        End If
+    Next
+    BuildComputerArray = result
+End Function
+</script>
+</head>
+
+<body>
+<div class="container">
+    <h2>Remote File Copy (Admin Share)</h2>
+
+    <label>Source (local file or folder)</label>
+    <div class="row">
+        <div>
+            <input type="text" id="txtSource" placeholder="e.g. C:\Installers\setup.exe or C:\MyFolder">
+        </div>
+        <div style="flex:0 0 auto;">
+            <button class="btn-secondary" onclick="BrowseSource" style="margin-top:3px;">File...</button>
+            <button class="btn-secondary" onclick="BrowseFolder" style="margin-top:3px;">Folder...</button>
+        </div>
+    </div>
+
+    <label>Computers</label>
+    <div class="row">
+        <button class="btn-secondary" onclick="LoadPCList" style="margin-top:0;">Load PC List...</button>
+        <button class="btn-secondary" onclick="SelectAllPCs" style="margin-top:0;">Select All</button>
+        <button class="btn-secondary" onclick="ClearAllPCs" style="margin-top:0;">Clear All</button>
+        <button class="btn-ping" onclick="PingCheck" style="margin-top:0;">Ping Check</button>
+    </div>
+    <div id="pcListContainer"></div>
+
+    <label>Destination Path (on remote PC)</label>
+    <input type="text" id="txtDest" value="C:\Temp" placeholder="e.g. C:\Temp or D:\Deploy">
+
+    <div style="margin-top: 6px;">
+        <input type="radio" name="destPreset" id="radioCustom" checked onclick="SetDestCustom()">
+        <label for="radioCustom" style="display:inline; font-weight:normal; margin-right: 15px;">Custom Path</label>
+
+        <input type="radio" name="destPreset" id="radioStartup" onclick="SetDestStartup()">
+        <label for="radioStartup" style="display:inline; font-weight:normal;">Computer Startup</label>
+    </div>
+
+    <div class="row">
+        <div>
+            <label>Username</label>
+            <input type="text" id="txtUser" placeholder="DOMAIN\admin or .\Administrator">
+        </div>
+        <div>
+            <label>Password</label>
+            <input type="password" id="txtPass" placeholder="Password">
+        </div>
+    </div>
+
+    <div class="checkbox-row">
+        <input type="checkbox" id="chkRecurse" checked>
+        <label for="chkRecurse" style="display:inline; font-weight:normal;">Recurse (copy entire folder)</label>
+        &nbsp;&nbsp;&nbsp;
+        <input type="checkbox" id="chkOnlyOnline" checked>
+        <label for="chkOnlyOnline" style="display:inline; font-weight:normal;">Only copy to Online PCs</label>
+    </div>
+
+    <div class="row" style="margin-top:12px;">
+        <button class="btn-primary" onclick="StartCopy">Start Copy</button>
+        <button class="btn-secondary" onclick="ClearLog">Clear Log</button>
+    </div>
+
+    <div class="status">Log:</div>
+    <div id="log"></div>
+</div>
+</body>
+</html>
