@@ -51,8 +51,9 @@ For each target the script:
 1. Clears any old `net use` session for that share
 2. Connects with the required credentials
 3. Creates the destination folder if missing
-4. Copies with `Copy-Item -Recurse -Force`
-5. Disconnects the share session
+4. Copies with `Copy-Item`
+5. Verifies the copied file or folder exists on the remote share
+6. Disconnects the share session
 
 Console stays visible so real connect/copy failures show as `[FAILED]`.
 

@@ -13,7 +13,7 @@
     SHOWINTASKBAR="yes"
     SINGLEINSTANCE="yes"
     SYSMENU="yes"
-    VERSION="2.5"
+    VERSION="2.6"
     WINDOWSTATE="normal"
 />
 
@@ -626,6 +626,16 @@ Sub StartCopy
     psContent = psContent & "$user = '" & EscapePS(user) & "'" & vbCrLf
     psContent = psContent & "$pass = '" & EscapePS(pass) & "'" & vbCrLf
     psContent = psContent & vbCrLf
+    psContent = psContent & "function Verify-RemoteItem {" & vbCrLf
+    psContent = psContent & "    param($SourcePath, $DestRoot)" & vbCrLf
+    psContent = psContent & "    $leaf = Split-Path -Path $SourcePath -Leaf" & vbCrLf
+    psContent = psContent & "    $remoteItem = Join-Path $DestRoot $leaf" & vbCrLf
+    psContent = psContent & "    if (-not (Test-Path -LiteralPath $remoteItem)) {" & vbCrLf
+    psContent = psContent & "        throw ('Verify failed: not found at ' + $remoteItem)" & vbCrLf
+    psContent = psContent & "    }" & vbCrLf
+    psContent = psContent & "    Write-Host ('[VERIFIED] ' + $remoteItem) -ForegroundColor Green" & vbCrLf
+    psContent = psContent & "}" & vbCrLf
+    psContent = psContent & vbCrLf
 
     psContent = psContent & "foreach ($pc in $computers) {" & vbCrLf
     psContent = psContent & "    $pc = $pc.Trim()" & vbCrLf
@@ -633,8 +643,8 @@ Sub StartCopy
     psContent = psContent & "    Write-Host ''" & vbCrLf
     psContent = psContent & "    Write-Host ('>>> Processing ' + $pc + ' ...') -ForegroundColor Cyan" & vbCrLf
     psContent = psContent & vbCrLf
-    psContent = psContent & "    cmd /c net use \\$pc\ipc$ /delete /y >nul 2>&1" & vbCrLf
-    psContent = psContent & "    cmd /c net use \\$pc\$driveLetter`$ /delete /y >nul 2>&1" & vbCrLf
+    psContent = psContent & "    cmd /c ""net use \\$pc\ipc$ /delete /y >nul 2>&1""" & vbCrLf
+    psContent = psContent & "    cmd /c ""net use \\$pc\$driveLetter`$ /delete /y >nul 2>&1""" & vbCrLf
     psContent = psContent & vbCrLf
     psContent = psContent & "    $adminShare = '\\' + $pc + '\' + $driveLetter + '$\' + $restPath" & vbCrLf
     psContent = psContent & "    Write-Host ('Target folder: ' + $adminShare)" & vbCrLf
@@ -652,12 +662,18 @@ Sub StartCopy
     psContent = psContent & "        }" & vbCrLf
     psContent = psContent & vbCrLf
     psContent = psContent & "        Write-Host 'Copying...'" & vbCrLf
-    psContent = psContent & "        Copy-Item -Path $source -Destination $adminShare -Recurse -Force -ErrorAction Stop" & vbCrLf
+    psContent = psContent & "        if ($recurse) {" & vbCrLf
+    psContent = psContent & "            Copy-Item -Path $source -Destination $adminShare -Recurse -Force -ErrorAction Stop" & vbCrLf
+    psContent = psContent & "        } else {" & vbCrLf
+    psContent = psContent & "            Copy-Item -Path $source -Destination $adminShare -Force -ErrorAction Stop" & vbCrLf
+    psContent = psContent & "        }" & vbCrLf
+    psContent = psContent & "        Write-Host 'Verifying...'" & vbCrLf
+    psContent = psContent & "        Verify-RemoteItem -SourcePath $source -DestRoot $adminShare" & vbCrLf
     psContent = psContent & "        Write-Host ('[SUCCESS] ' + $pc) -ForegroundColor Green" & vbCrLf
-    psContent = psContent & "        cmd /c net use \\$pc\$driveLetter`$ /delete /y >nul 2>&1" & vbCrLf
+    psContent = psContent & "        cmd /c ""net use \\$pc\$driveLetter`$ /delete /y >nul 2>&1""" & vbCrLf
     psContent = psContent & "    } catch {" & vbCrLf
     psContent = psContent & "        Write-Host ('[FAILED] ' + $pc + ' : ' + $_.Exception.Message) -ForegroundColor Red" & vbCrLf
-    psContent = psContent & "        cmd /c net use \\$pc\$driveLetter`$ /delete /y >nul 2>&1" & vbCrLf
+    psContent = psContent & "        cmd /c ""net use \\$pc\$driveLetter`$ /delete /y >nul 2>&1""" & vbCrLf
     psContent = psContent & "    }" & vbCrLf
     psContent = psContent & "}" & vbCrLf
     psContent = psContent & "Write-Host ''" & vbCrLf
